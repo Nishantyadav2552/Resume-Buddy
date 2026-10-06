@@ -1,27 +1,27 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+from typing import List
+from datetime import datetime
+
 from app.database import get_db
 from app.models.resume import Resume
+from app.models.user import User
 from app.schemas.resume import ResumeCreate, ResumeResponse, ResumeUpdate
-from typing import List
-from jose import jwt
+from app.api.deps import get_current_user
 
 router = APIRouter()
 
-from app.config import SECRET_KEY, ALGORITHM
-
-def get_current_user_id(token: str) -> int:
-    payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-    return int(payload.get("sub"))
-
-@router.post("/", response_model=ResumeResponse)
-def create_resume(resume: ResumeCreate, token: str, db: Session = Depends(get_db)):
-    user_id = get_current_user_id(token)
+@router.post("/", response_model=ResumeResponse, status_code=status.HTTP_201_CREATED)
+def create_resume(
+    resume: ResumeCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     new_resume = Resume(
-        user_id=user_id,
-        title=resume.title,
-        template=resume.template,
-        content=resume.content
+        user_id=current_user.id,
+        title=resume.title or "Untitled Resume",
+        template=resume.template or "classic",
+        content=resume.content or {}
     )
     db.add(new_resume)
     db.commit()
@@ -29,37 +29,82 @@ def create_resume(resume: ResumeCreate, token: str, db: Session = Depends(get_db
     return new_resume
 
 @router.get("/", response_model=List[ResumeResponse])
-def get_resumes(token: str, db: Session = Depends(get_db)):
-    user_id = get_current_user_id(token)
-    resumes = db.query(Resume).filter(Resume.user_id == user_id).all()
+def get_resumes(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    resumes = (
+        db.query(Resume)
+        .filter(Resume.user_id == current_user.id)
+        .order_by(Resume.id.desc())
+        .all()
+    )
     return resumes
 
 @router.get("/{resume_id}", response_model=ResumeResponse)
-def get_resume(resume_id: int, token: str, db: Session = Depends(get_db)):
-    user_id = get_current_user_id(token)
-    resume = db.query(Resume).filter(Resume.id == resume_id, Resume.user_id == user_id).first()
+def get_resume(
+    resume_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    resume = (
+        db.query(Resume)
+        .filter(Resume.id == resume_id, Resume.user_id == current_user.id)
+        .first()
+    )
     if not resume:
-        raise HTTPException(status_code=404, detail="Resume not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Resume not found or access denied"
+        )
     return resume
 
 @router.put("/{resume_id}", response_model=ResumeResponse)
-def update_resume(resume_id: int, resume: ResumeUpdate, token: str, db: Session = Depends(get_db)):
-    user_id = get_current_user_id(token)
-    db_resume = db.query(Resume).filter(Resume.id == resume_id, Resume.user_id == user_id).first()
+def update_resume(
+    resume_id: int,
+    resume_update: ResumeUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    db_resume = (
+        db.query(Resume)
+        .filter(Resume.id == resume_id, Resume.user_id == current_user.id)
+        .first()
+    )
     if not db_resume:
-        raise HTTPException(status_code=404, detail="Resume not found")
-    db_resume.title = resume.title
-    db_resume.content = resume.content
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Resume not found or access denied"
+        )
+
+    if resume_update.title is not None:
+        db_resume.title = resume_update.title
+    if resume_update.template is not None:
+        db_resume.template = resume_update.template
+    if resume_update.content is not None:
+        db_resume.content = resume_update.content
+
+    db_resume.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(db_resume)
     return db_resume
 
 @router.delete("/{resume_id}")
-def delete_resume(resume_id: int, token: str, db: Session = Depends(get_db)):
-    user_id = get_current_user_id(token)
-    resume = db.query(Resume).filter(Resume.id == resume_id, Resume.user_id == user_id).first()
+def delete_resume(
+    resume_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    resume = (
+        db.query(Resume)
+        .filter(Resume.id == resume_id, Resume.user_id == current_user.id)
+        .first()
+    )
     if not resume:
-        raise HTTPException(status_code=404, detail="Resume not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Resume not found or access denied"
+        )
     db.delete(resume)
     db.commit()
-    return {"message": "Resume deleted"}
+    return {"message": "Resume deleted successfully", "id": resume_id}

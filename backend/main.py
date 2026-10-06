@@ -20,6 +20,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# If using PostgreSQL, ensure pgvector extension exists before creating tables
+if engine.dialect.name == "postgresql":
+    from sqlalchemy import text
+    with engine.connect() as conn:
+        conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
+        conn.commit()
+
 user.Base.metadata.create_all(bind=engine)
 resume.Base.metadata.create_all(bind=engine)
 knowledge_base.Base.metadata.create_all(bind=engine)

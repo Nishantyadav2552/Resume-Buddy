@@ -1,151 +1,139 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
 from sqlalchemy.orm import Session
+from pydantic import BaseModel
+from typing import Optional, Dict, Any, List
+
 from app.database import get_db
-from app.models.knowledge_base import KBPersonal, KBEducation, KBSkill
+from app.models.knowledge_base import (
+    KBPersonal, KBEducation, KBSkill,
+    KBProject, KBExperience, KBCertification, KBAchievement
+)
+from app.models.user import User
+from app.api.deps import get_current_user
 from app.services.retrieval import retrieve_and_rank
 from app.services.file_extraction import extract_text_from_file
-from pydantic import BaseModel
-from jose import jwt
+from app.services.llm import tailor_resume_content
 
 router = APIRouter()
-
-from app.config import SECRET_KEY, ALGORITHM
-
-def get_user_id(token: str) -> int:
-    payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-    return int(payload.get("sub"))
 
 class GenerateRequest(BaseModel):
     job_description: str
     template: str = "classic"
 
 @router.post("/generate")
-def generate_resume(request: GenerateRequest, token: str, db: Session = Depends(get_db)):
-    user_id = get_user_id(token)
+def generate_resume(
+    request: GenerateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if not request.job_description.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Job description cannot be empty"
+        )
 
     # --- Validate minimum requirements ---
-    personal = db.query(KBPersonal).filter(KBPersonal.user_id == user_id).first()
+    personal = db.query(KBPersonal).filter(KBPersonal.user_id == current_user.id).first()
     if not personal:
-        raise HTTPException(status_code=400, detail="Please complete your personal information first")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Please complete your personal information first in the Knowledge Base"
+        )
 
-    education = db.query(KBEducation).filter(KBEducation.user_id == user_id).all()
+    education = db.query(KBEducation).filter(KBEducation.user_id == current_user.id).all()
     if len(education) < 1:
-        raise HTTPException(status_code=400, detail="Please add at least 1 education entry")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Please add at least 1 education entry to your Knowledge Base"
+        )
 
-    skills = db.query(KBSkill).filter(KBSkill.user_id == user_id).all()
+    projects = db.query(KBProject).filter(KBProject.user_id == current_user.id).all()
+    if len(projects) < 2:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Please add at least 2 projects to your Knowledge Base"
+        )
+
+    skills = db.query(KBSkill).filter(KBSkill.user_id == current_user.id).all()
     if len(skills) < 3:
-        raise HTTPException(status_code=400, detail="Please add at least 3 skills")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Please add at least 3 skills to your Knowledge Base"
+        )
 
-    # --- Retrieve and rank items ---
+    # --- Retrieve and rank items using Hybrid RAG ---
     try:
-        ranked = retrieve_and_rank(user_id, request.job_description, db)
+        ranked = retrieve_and_rank(current_user.id, request.job_description, db)
     except Exception as e:
         import traceback
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Retrieval error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Hybrid retrieval error: {str(e)}"
+        )
 
     if not ranked:
-        raise HTTPException(status_code=500, detail="Retrieval returned empty results")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Retrieval returned empty results"
+        )
 
-    if len(ranked["projects"]) < 2:
-        raise HTTPException(status_code=400, detail="Please add at least 2 projects to your knowledge base")
-
-    # --- Assemble resume content ---
-    # Group skills by category
-    skill_groups: dict = {}
-    for s in ranked["skills"]:
-        cat = s["category"]
-        if cat not in skill_groups:
-            skill_groups[cat] = []
-        skill_groups[cat].append(s["name"])
-
-    resume_content = {
-        "personal": {
-            "name": personal.name,
-            "email": personal.email,
-            "phone": personal.phone or "",
-            "location": personal.location or "",
-            "linkedin": personal.linkedin or "",
-            "github": personal.github or "",
-            "summary": personal.summary or ""
-        },
-        "education": [
-            {
-                "school": edu.school,
-                "degree": edu.degree,
-                "field": edu.field or "",
-                "startYear": edu.start_year or "",
-                "endYear": edu.end_year or ""
-            }
-            for edu in education
-        ],
-        "experience": [
-            {
-                "company": exp["company"],
-                "role": exp["role"],
-                "startDate": exp.get("start_date") or "",
-                "endDate": exp.get("end_date") or "",
-                "description": exp.get("responsibilities") or ""
-            }
-            for exp in ranked["experience"]
-        ],
-        "projects": [
-            {
-                "title": p["title"],
-                "description": p.get("description") or "",
-                "technologies": p.get("technologies") or "",
-                "link": ""
-            }
-            for p in ranked["projects"][:3]
-        ],
-        "skills": {
-            "technical": skill_groups.get("languages", []),
-            "frameworks": skill_groups.get("frameworks", []),
-            "concepts": skill_groups.get("tools", []) + skill_groups.get("databases", []),
-            "soft": skill_groups.get("cloud", [])
-        },
-        "certifications": [
-            {
-                "name": c["name"],
-                "issuer": c.get("issuer") or "",
-                "date": c.get("date") or "",
-                "link": ""
-            }
-            for c in ranked["certifications"]
-        ],
-        "extracurricular": [
-            {
-                "title": a["title"],
-                "organization": "",
-                "date": a.get("date") or "",
-                "description": a.get("description") or ""
-            }
-            for a in ranked["achievements"]
-        ]
+    # Convert personal object to dict
+    personal_dict = {
+        "name": personal.name,
+        "email": personal.email,
+        "phone": personal.phone or "",
+        "location": personal.location or "",
+        "linkedin": personal.linkedin or "",
+        "github": personal.github or "",
+        "summary": personal.summary or ""
     }
+
+    education_list = [
+        {
+            "school": edu.school,
+            "degree": edu.degree,
+            "field": edu.field or "",
+            "start_year": edu.start_year or "",
+            "end_year": edu.end_year or ""
+        }
+        for edu in education
+    ]
+
+    # --- LLM-grounded Tailoring Pipeline ---
+    resume_content = tailor_resume_content(
+        personal=personal_dict,
+        education=education_list,
+        ranked_projects=ranked.get("projects", []),
+        ranked_experience=ranked.get("experience", []),
+        ranked_skills=ranked.get("skills", []),
+        ranked_certs=ranked.get("certifications", []),
+        ranked_achievements=ranked.get("achievements", []),
+        jd_text=request.job_description
+    )
 
     return {
-    "resume_content": resume_content,
-    "template": request.template,
-    "all_ranked_projects": ranked["projects"],
-    "ranking_info": {
-        "projects_selected": min(len(ranked["projects"]), 3),
-        "experience_selected": len(ranked["experience"]),
-        "certifications_selected": len(ranked["certifications"]),
-        "achievements_selected": len(ranked["achievements"]),
-        "skills_selected": len(ranked["skills"])
+        "resume_content": resume_content,
+        "template": request.template,
+        "all_ranked_projects": ranked.get("projects", []),
+        "ranking_info": {
+            "projects_selected": min(len(ranked.get("projects", [])), 3),
+            "experience_selected": len(ranked.get("experience", [])),
+            "certifications_selected": len(ranked.get("certifications", [])),
+            "achievements_selected": len(ranked.get("achievements", [])),
+            "skills_selected": len(ranked.get("skills", []))
+        }
     }
-}
 
 @router.get("/status")
-def get_kb_status(token: str, db: Session = Depends(get_db)):
-    user_id = get_user_id(token)
-
-    from app.models.knowledge_base import KBProject
-    personal = db.query(KBPersonal).filter(KBPersonal.user_id == user_id).first()
-    education = db.query(KBEducation).filter(KBEducation.user_id == user_id).all()
-    skills = db.query(KBSkill).filter(KBSkill.user_id == user_id).all()
-    projects = db.query(KBProject).filter(KBProject.user_id == user_id).all()
+def get_kb_status(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    personal = db.query(KBPersonal).filter(KBPersonal.user_id == current_user.id).first()
+    education = db.query(KBEducation).filter(KBEducation.user_id == current_user.id).all()
+    skills = db.query(KBSkill).filter(KBSkill.user_id == current_user.id).all()
+    projects = db.query(KBProject).filter(KBProject.user_id == current_user.id).all()
 
     return {
         "personal": personal is not None,
@@ -161,15 +149,14 @@ def get_kb_status(token: str, db: Session = Depends(get_db)):
     }
 
 @router.post("/extract-jd")
-def extract_jd(token: str, file: UploadFile = File(...)):
-    get_user_id(token)  # validates the token; raises if invalid
-
+def extract_jd(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user)
+):
     text = extract_text_from_file(file)
-
-    if not text.strip():
+    if not text or not text.strip():
         raise HTTPException(
-            status_code=400,
-            detail="Could not extract text from this file. Try pasting the job description instead."
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Could not extract text from this file. Please ensure it is a valid PDF or DOCX file."
         )
-
     return {"text": text}

@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useRef } from "react"
+import React, { useEffect, useState, useRef } from "react"
 import { useRouter, useParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import ResumePreview from "@/components/ResumePreview"
@@ -99,13 +99,13 @@ function SortableSection({ id, children }: { id: string; children: React.ReactNo
           {...attributes}
           {...listeners}
           className="text-[#e3e1da] hover:text-[#6e7682] cursor-grab active:cursor-grabbing px-1"
-          title="Drag to reorder"
+          title="Drag to reorder section"
           suppressHydrationWarning
         >
           ⠿
         </button>
         <span className="text-xs text-[#6e7682] uppercase tracking-wider font-medium font-mono">
-          {id === "personal" ? "Personal Info" : id === "extracurricular" ? "Extracurricular" : id.charAt(0).toUpperCase() + id.slice(1)}
+          {id === "personal" ? "Personal Information" : id === "extracurricular" ? "Extracurricular & Achievements" : id.charAt(0).toUpperCase() + id.slice(1)}
         </span>
       </div>
       {children}
@@ -120,6 +120,8 @@ export default function ResumeEditorPage() {
   const [title, setTitle] = useState("")
   const [token, setToken] = useState("")
   const [saved, setSaved] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [loading, setLoading] = useState(true)
   const [sectionOrder, setSectionOrder] = useState<string[]>(defaultSectionOrder)
   const [template, setTemplate] = useState("classic")
   const [skillInputs, setSkillInputs] = useState({ technical: "", frameworks: "", concepts: "", soft: "" })
@@ -138,49 +140,82 @@ export default function ResumeEditorPage() {
 
   useEffect(() => {
     const t = localStorage.getItem("token")
-    if (!t) { router.push("/login"); return }
+    if (!t) {
+      router.push("/login")
+      return
+    }
     setToken(t)
     fetchResume(t)
   }, [])
 
   const fetchResume = async (t: string) => {
-    const res = await fetch(`${API_URL}/resumes/${params.id}?token=${t}`)
-    const data = await res.json()
-    setTitle(data.title)
-    setTemplate(data.template || "classic")
-    setContent({
-      personal: {
-        name: data.content?.personal?.name || "",
-        email: data.content?.personal?.email || "",
-        phone: data.content?.personal?.phone || "",
-        location: data.content?.personal?.location || "",
-        linkedin: data.content?.personal?.linkedin || "",
-        github: data.content?.personal?.github || "",
-        summary: data.content?.personal?.summary || ""
-      },
-      experience: data.content?.experience || [],
-      projects: data.content?.projects || [],
-      skills: {
-        technical: data.content?.skills?.technical || [],
-        frameworks: data.content?.skills?.frameworks || [],
-        concepts: data.content?.skills?.concepts || [],
-        soft: data.content?.skills?.soft || []
-      },
-      education: data.content?.education || [],
-      certifications: data.content?.certifications || [],
-      extracurricular: data.content?.extracurricular || []
-    })
-    if (data.content?.sectionOrder) setSectionOrder(data.content.sectionOrder)
+    try {
+      setLoading(true)
+      const res = await fetch(`${API_URL}/resumes/${params.id}?token=${t}`, {
+        headers: { Authorization: `Bearer ${t}` }
+      })
+      if (!res.ok) {
+        alert("Resume not found or access denied.")
+        router.push("/builder")
+        return
+      }
+      const data = await res.json()
+      setTitle(data.title || "Untitled Resume")
+      setTemplate(data.template || "classic")
+      setContent({
+        personal: {
+          name: data.content?.personal?.name || "",
+          email: data.content?.personal?.email || "",
+          phone: data.content?.personal?.phone || "",
+          location: data.content?.personal?.location || "",
+          linkedin: data.content?.personal?.linkedin || "",
+          github: data.content?.personal?.github || "",
+          summary: data.content?.personal?.summary || ""
+        },
+        experience: Array.isArray(data.content?.experience) ? data.content.experience : [],
+        projects: Array.isArray(data.content?.projects) ? data.content.projects : [],
+        skills: {
+          technical: data.content?.skills?.technical || [],
+          frameworks: data.content?.skills?.frameworks || [],
+          concepts: data.content?.skills?.concepts || [],
+          soft: data.content?.skills?.soft || []
+        },
+        education: Array.isArray(data.content?.education) ? data.content.education : [],
+        certifications: Array.isArray(data.content?.certifications) ? data.content.certifications : [],
+        extracurricular: Array.isArray(data.content?.extracurricular) ? data.content.extracurricular : []
+      })
+      if (data.content?.sectionOrder && Array.isArray(data.content.sectionOrder)) {
+        setSectionOrder(data.content.sectionOrder)
+      }
+    } catch {
+      alert("Failed to load resume.")
+    } finally {
+      setLoading(false)
+    }
   }
 
   const saveResume = async () => {
-    await fetch(`${API_URL}/resumes/${params.id}?token=${token}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title, template, content: { ...content, sectionOrder } })
-    })
-    setSaved(true)
-    setTimeout(() => setSaved(false), 2000)
+    setSaving(true)
+    try {
+      await fetch(`${API_URL}/resumes/${params.id}?token=${token}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          title,
+          template,
+          content: { ...content, sectionOrder }
+        })
+      })
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2500)
+    } catch {
+      alert("Error saving resume.")
+    } finally {
+      setSaving(false)
+    }
   }
 
   const handleDragEnd = (event: DragEndEvent) => {
@@ -200,12 +235,24 @@ export default function ResumeEditorPage() {
 
   const addSkill = (category: keyof ResumeContent["skills"]) => {
     if (!skillInputs[category].trim()) return
-    setContent(prev => ({ ...prev, skills: { ...prev.skills, [category]: [...prev.skills[category], skillInputs[category].trim()] } }))
+    setContent(prev => ({
+      ...prev,
+      skills: {
+        ...prev.skills,
+        [category]: [...prev.skills[category], skillInputs[category].trim()]
+      }
+    }))
     setSkillInputs(prev => ({ ...prev, [category]: "" }))
   }
 
   const removeSkill = (category: keyof ResumeContent["skills"], index: number) => {
-    setContent(prev => ({ ...prev, skills: { ...prev.skills, [category]: prev.skills[category].filter((_, i) => i !== index) } }))
+    setContent(prev => ({
+      ...prev,
+      skills: {
+        ...prev.skills,
+        [category]: prev.skills[category].filter((_, i) => i !== index)
+      }
+    }))
   }
 
   const addExperience = () => setContent(prev => ({ ...prev, experience: [...prev.experience, { company: "", role: "", startDate: "", endDate: "", description: "" }] }))
@@ -229,37 +276,47 @@ export default function ResumeEditorPage() {
   const removeExtra = (index: number) => setContent(prev => ({ ...prev, extracurricular: prev.extracurricular.filter((_, i) => i !== index) }))
 
   const skillCategories = [
-    { key: "technical" as const, label: "Technical Skills" },
-    { key: "frameworks" as const, label: "Frameworks & Tools" },
-    { key: "concepts" as const, label: "Concepts" },
-    { key: "soft" as const, label: "Soft Skills" },
+    { key: "technical" as const, label: "Technical & Programming Skills" },
+    { key: "frameworks" as const, label: "Frameworks & Libraries" },
+    { key: "concepts" as const, label: "Databases & Cloud Concepts" },
+    { key: "soft" as const, label: "Tools & Methodologies" },
   ]
 
-  const inputCls = "mt-1 w-full px-3 py-2 border border-[#e3e1da] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#16191d] bg-white"
+  const inputCls = "mt-1 w-full px-3 py-2 border border-[#e3e1da] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#16191d] bg-white"
 
   const renderSection = (sectionId: string) => {
     switch (sectionId) {
       case "personal":
         return (
-          <div className="bg-white border border-[#e3e1da] rounded-xl p-6">
+          <div className="bg-white border border-[#e3e1da] rounded-xl p-6 shadow-sm">
             <h3 className="font-semibold text-[#16191d] mb-4">Personal Information</h3>
             <div className="space-y-4">
               {[
                 { label: "Full Name", field: "name", type: "text" },
-                { label: "Email", field: "email", type: "email" },
-                { label: "Phone", field: "phone", type: "text" },
+                { label: "Email Address", field: "email", type: "email" },
+                { label: "Phone Number", field: "phone", type: "text" },
                 { label: "Location", field: "location", type: "text" },
                 { label: "LinkedIn URL", field: "linkedin", type: "text" },
                 { label: "GitHub URL", field: "github", type: "text" },
               ].map(({ label, field, type }) => (
                 <div key={field}>
                   <label className="text-sm font-medium text-[#16191d]">{label}</label>
-                  <input type={type} value={content.personal[field as keyof typeof content.personal]} onChange={(e) => updatePersonal(field, e.target.value)} className={inputCls} />
+                  <input
+                    type={type}
+                    value={content.personal[field as keyof typeof content.personal]}
+                    onChange={(e) => updatePersonal(field, e.target.value)}
+                    className={inputCls}
+                  />
                 </div>
               ))}
               <div>
-                <label className="text-sm font-medium text-[#16191d]">Summary</label>
-                <textarea value={content.personal.summary} onChange={(e) => updatePersonal("summary", e.target.value)} rows={4} className={inputCls} />
+                <label className="text-sm font-medium text-[#16191d]">Professional Summary</label>
+                <textarea
+                  value={content.personal.summary}
+                  onChange={(e) => updatePersonal("summary", e.target.value)}
+                  rows={4}
+                  className={inputCls}
+                />
               </div>
             </div>
           </div>
@@ -267,24 +324,40 @@ export default function ResumeEditorPage() {
 
       case "experience":
         return (
-          <div className="bg-white border border-[#e3e1da] rounded-xl p-6">
+          <div className="bg-white border border-[#e3e1da] rounded-xl p-6 shadow-sm">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="font-semibold text-[#16191d]">Experience</h3>
-              <button onClick={addExperience} className="text-xs border border-[#e3e1da] px-3 py-1.5 rounded-lg hover:border-[#6e7682] text-[#6e7682] transition-colors">+ Add</button>
+              <h3 className="font-semibold text-[#16191d]">Work Experience</h3>
+              <button
+                onClick={addExperience}
+                className="text-xs border border-[#e3e1da] px-3 py-1.5 rounded-lg hover:border-[#6e7682] text-[#6e7682] transition-colors font-medium"
+              >
+                + Add Experience
+              </button>
             </div>
             {content.experience.map((exp, index) => (
-              <div key={index} className="border border-[#e3e1da] rounded-lg p-4 mb-4 space-y-3">
+              <div key={index} className="border border-[#e3e1da] rounded-xl p-4 mb-4 space-y-3 bg-[#fafaf7]">
                 {[{ label: "Company", field: "company" }, { label: "Role", field: "role" }, { label: "Start Date", field: "startDate" }, { label: "End Date", field: "endDate" }].map(({ label, field }) => (
                   <div key={field}>
                     <label className="text-sm font-medium text-[#16191d]">{label}</label>
-                    <input type="text" value={exp[field as keyof typeof exp]} onChange={(e) => updateExperience(index, field, e.target.value)} className={inputCls} />
+                    <input
+                      type="text"
+                      value={exp[field as keyof typeof exp]}
+                      onChange={(e) => updateExperience(index, field, e.target.value)}
+                      className={inputCls}
+                    />
                   </div>
                 ))}
                 <div>
-                  <label className="text-sm font-medium text-[#16191d]">Description</label>
-                  <textarea value={exp.description} onChange={(e) => updateExperience(index, "description", e.target.value)} rows={3} className={inputCls} />
+                  <label className="text-sm font-medium text-[#16191d]">Key Responsibilities & Achievements</label>
+                  <textarea
+                    value={exp.description}
+                    onChange={(e) => updateExperience(index, "description", e.target.value)}
+                    rows={3}
+                    placeholder="Describe impact, metrics, and technologies used (separate lines for bullets)..."
+                    className={inputCls}
+                  />
                 </div>
-                <button onClick={() => removeExperience(index)} className="text-xs text-[#ff6b47] hover:underline">Remove</button>
+                <button onClick={() => removeExperience(index)} className="text-xs text-[#ff6b47] hover:underline font-medium">Remove Entry</button>
               </div>
             ))}
           </div>
@@ -292,24 +365,40 @@ export default function ResumeEditorPage() {
 
       case "projects":
         return (
-          <div className="bg-white border border-[#e3e1da] rounded-xl p-6">
+          <div className="bg-white border border-[#e3e1da] rounded-xl p-6 shadow-sm">
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-semibold text-[#16191d]">Projects</h3>
-              <button onClick={addProject} className="text-xs border border-[#e3e1da] px-3 py-1.5 rounded-lg hover:border-[#6e7682] text-[#6e7682] transition-colors">+ Add</button>
+              <button
+                onClick={addProject}
+                className="text-xs border border-[#e3e1da] px-3 py-1.5 rounded-lg hover:border-[#6e7682] text-[#6e7682] transition-colors font-medium"
+              >
+                + Add Project
+              </button>
             </div>
             {content.projects.map((project, index) => (
-              <div key={index} className="border border-[#e3e1da] rounded-lg p-4 mb-4 space-y-3">
-                {[{ label: "Title", field: "title" }, { label: "Technologies", field: "technologies" }, { label: "Link", field: "link" }].map(({ label, field }) => (
+              <div key={index} className="border border-[#e3e1da] rounded-xl p-4 mb-4 space-y-3 bg-[#fafaf7]">
+                {[{ label: "Project Title", field: "title" }, { label: "Technologies Used", field: "technologies" }, { label: "Project Link / Demo", field: "link" }].map(({ label, field }) => (
                   <div key={field}>
                     <label className="text-sm font-medium text-[#16191d]">{label}</label>
-                    <input type="text" value={project[field as keyof typeof project]} onChange={(e) => updateProject(index, field, e.target.value)} className={inputCls} />
+                    <input
+                      type="text"
+                      value={project[field as keyof typeof project]}
+                      onChange={(e) => updateProject(index, field, e.target.value)}
+                      className={inputCls}
+                    />
                   </div>
                 ))}
                 <div>
-                  <label className="text-sm font-medium text-[#16191d]">Description</label>
-                  <textarea value={project.description} onChange={(e) => updateProject(index, "description", e.target.value)} rows={3} className={inputCls} />
+                  <label className="text-sm font-medium text-[#16191d]">Description & Outcomes</label>
+                  <textarea
+                    value={project.description}
+                    onChange={(e) => updateProject(index, "description", e.target.value)}
+                    rows={3}
+                    placeholder="Describe architecture, accomplishments, and quantifiable outcomes..."
+                    className={inputCls}
+                  />
                 </div>
-                <button onClick={() => removeProject(index)} className="text-xs text-[#ff6b47] hover:underline">Remove</button>
+                <button onClick={() => removeProject(index)} className="text-xs text-[#ff6b47] hover:underline font-medium">Remove Project</button>
               </div>
             ))}
           </div>
@@ -317,20 +406,32 @@ export default function ResumeEditorPage() {
 
       case "skills":
         return (
-          <div className="bg-white border border-[#e3e1da] rounded-xl p-6">
+          <div className="bg-white border border-[#e3e1da] rounded-xl p-6 shadow-sm">
             <h3 className="font-semibold text-[#16191d] mb-4">Skills</h3>
             {skillCategories.map(({ key, label }) => (
               <div key={key} className="mb-6">
                 <label className="text-sm font-medium text-[#16191d] mb-2 block">{label}</label>
                 <div className="flex gap-2 mb-2">
-                  <input type="text" value={skillInputs[key]} onChange={(e) => setSkillInputs(prev => ({ ...prev, [key]: e.target.value }))} onKeyDown={(e) => e.key === "Enter" && addSkill(key)} placeholder={`Add ${label.toLowerCase()} and press Enter`} className={inputCls + " mt-0"} />
-                  <button onClick={() => addSkill(key)} className="text-xs bg-[#16191d] text-white px-3 py-1.5 rounded-lg hover:bg-[#2a2d32] transition-colors">Add</button>
+                  <input
+                    type="text"
+                    value={skillInputs[key]}
+                    onChange={(e) => setSkillInputs(prev => ({ ...prev, [key]: e.target.value }))}
+                    onKeyDown={(e) => e.key === "Enter" && addSkill(key)}
+                    placeholder={`Add ${label.toLowerCase()} and press Enter`}
+                    className={inputCls + " mt-0"}
+                  />
+                  <button
+                    onClick={() => addSkill(key)}
+                    className="text-xs bg-[#16191d] text-white px-4 py-2 rounded-xl hover:bg-[#2a2d32] transition-colors font-medium shadow-sm"
+                  >
+                    Add
+                  </button>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   {content.skills[key].map((skill, index) => (
-                    <span key={index} className="bg-[#f1f0eb] text-[#16191d] px-3 py-1 rounded-full text-sm flex items-center gap-2">
+                    <span key={index} className="bg-[#f1f0eb] text-[#16191d] px-3 py-1 rounded-full text-xs font-medium flex items-center gap-2">
                       {skill}
-                      <button onClick={() => removeSkill(key, index)} className="text-[#6e7682] hover:text-[#ff6b47]">×</button>
+                      <button onClick={() => removeSkill(key, index)} className="text-[#6e7682] hover:text-[#ff6b47] font-bold">×</button>
                     </span>
                   ))}
                 </div>
@@ -341,20 +442,30 @@ export default function ResumeEditorPage() {
 
       case "education":
         return (
-          <div className="bg-white border border-[#e3e1da] rounded-xl p-6">
+          <div className="bg-white border border-[#e3e1da] rounded-xl p-6 shadow-sm">
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-semibold text-[#16191d]">Education</h3>
-              <button onClick={addEducation} className="text-xs border border-[#e3e1da] px-3 py-1.5 rounded-lg hover:border-[#6e7682] text-[#6e7682] transition-colors">+ Add</button>
+              <button
+                onClick={addEducation}
+                className="text-xs border border-[#e3e1da] px-3 py-1.5 rounded-lg hover:border-[#6e7682] text-[#6e7682] transition-colors font-medium"
+              >
+                + Add Education
+              </button>
             </div>
             {content.education.map((edu, index) => (
-              <div key={index} className="border border-[#e3e1da] rounded-lg p-4 mb-4 space-y-3">
-                {[{ label: "School", field: "school" }, { label: "Degree", field: "degree" }, { label: "Field of Study", field: "field" }, { label: "Start Year", field: "startYear" }, { label: "End Year", field: "endYear" }].map(({ label, field }) => (
+              <div key={index} className="border border-[#e3e1da] rounded-xl p-4 mb-4 space-y-3 bg-[#fafaf7]">
+                {[{ label: "School / Institution", field: "school" }, { label: "Degree", field: "degree" }, { label: "Field of Study", field: "field" }, { label: "Start Year", field: "startYear" }, { label: "End Year", field: "endYear" }].map(({ label, field }) => (
                   <div key={field}>
                     <label className="text-sm font-medium text-[#16191d]">{label}</label>
-                    <input type="text" value={edu[field as keyof typeof edu]} onChange={(e) => updateEducation(index, field, e.target.value)} className={inputCls} />
+                    <input
+                      type="text"
+                      value={edu[field as keyof typeof edu]}
+                      onChange={(e) => updateEducation(index, field, e.target.value)}
+                      className={inputCls}
+                    />
                   </div>
                 ))}
-                <button onClick={() => removeEducation(index)} className="text-xs text-[#ff6b47] hover:underline">Remove</button>
+                <button onClick={() => removeEducation(index)} className="text-xs text-[#ff6b47] hover:underline font-medium">Remove Entry</button>
               </div>
             ))}
           </div>
@@ -362,20 +473,30 @@ export default function ResumeEditorPage() {
 
       case "certifications":
         return (
-          <div className="bg-white border border-[#e3e1da] rounded-xl p-6">
+          <div className="bg-white border border-[#e3e1da] rounded-xl p-6 shadow-sm">
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-semibold text-[#16191d]">Certifications</h3>
-              <button onClick={addCertification} className="text-xs border border-[#e3e1da] px-3 py-1.5 rounded-lg hover:border-[#6e7682] text-[#6e7682] transition-colors">+ Add</button>
+              <button
+                onClick={addCertification}
+                className="text-xs border border-[#e3e1da] px-3 py-1.5 rounded-lg hover:border-[#6e7682] text-[#6e7682] transition-colors font-medium"
+              >
+                + Add Certification
+              </button>
             </div>
             {content.certifications.map((cert, index) => (
-              <div key={index} className="border border-[#e3e1da] rounded-lg p-4 mb-4 space-y-3">
-                {[{ label: "Certificate Name", field: "name" }, { label: "Issuer", field: "issuer" }, { label: "Date", field: "date" }, { label: "Link", field: "link" }].map(({ label, field }) => (
+              <div key={index} className="border border-[#e3e1da] rounded-xl p-4 mb-4 space-y-3 bg-[#fafaf7]">
+                {[{ label: "Certificate Name", field: "name" }, { label: "Issuer", field: "issuer" }, { label: "Date Earned", field: "date" }, { label: "Credential Link", field: "link" }].map(({ label, field }) => (
                   <div key={field}>
                     <label className="text-sm font-medium text-[#16191d]">{label}</label>
-                    <input type="text" value={cert[field as keyof typeof cert]} onChange={(e) => updateCertification(index, field, e.target.value)} className={inputCls} />
+                    <input
+                      type="text"
+                      value={cert[field as keyof typeof cert]}
+                      onChange={(e) => updateCertification(index, field, e.target.value)}
+                      className={inputCls}
+                    />
                   </div>
                 ))}
-                <button onClick={() => removeCertification(index)} className="text-xs text-[#ff6b47] hover:underline">Remove</button>
+                <button onClick={() => removeCertification(index)} className="text-xs text-[#ff6b47] hover:underline font-medium">Remove Entry</button>
               </div>
             ))}
           </div>
@@ -383,24 +504,39 @@ export default function ResumeEditorPage() {
 
       case "extracurricular":
         return (
-          <div className="bg-white border border-[#e3e1da] rounded-xl p-6">
+          <div className="bg-white border border-[#e3e1da] rounded-xl p-6 shadow-sm">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="font-semibold text-[#16191d]">Extracurricular Activities</h3>
-              <button onClick={addExtra} className="text-xs border border-[#e3e1da] px-3 py-1.5 rounded-lg hover:border-[#6e7682] text-[#6e7682] transition-colors">+ Add</button>
+              <h3 className="font-semibold text-[#16191d]">Extracurricular & Achievements</h3>
+              <button
+                onClick={addExtra}
+                className="text-xs border border-[#e3e1da] px-3 py-1.5 rounded-lg hover:border-[#6e7682] text-[#6e7682] transition-colors font-medium"
+              >
+                + Add Activity
+              </button>
             </div>
             {content.extracurricular.map((extra, index) => (
-              <div key={index} className="border border-[#e3e1da] rounded-lg p-4 mb-4 space-y-3">
-                {[{ label: "Title", field: "title" }, { label: "Organization", field: "organization" }, { label: "Date", field: "date" }].map(({ label, field }) => (
+              <div key={index} className="border border-[#e3e1da] rounded-xl p-4 mb-4 space-y-3 bg-[#fafaf7]">
+                {[{ label: "Title / Honor", field: "title" }, { label: "Organization", field: "organization" }, { label: "Date", field: "date" }].map(({ label, field }) => (
                   <div key={field}>
                     <label className="text-sm font-medium text-[#16191d]">{label}</label>
-                    <input type="text" value={extra[field as keyof typeof extra]} onChange={(e) => updateExtra(index, field, e.target.value)} className={inputCls} />
+                    <input
+                      type="text"
+                      value={extra[field as keyof typeof extra]}
+                      onChange={(e) => updateExtra(index, field, e.target.value)}
+                      className={inputCls}
+                    />
                   </div>
                 ))}
                 <div>
                   <label className="text-sm font-medium text-[#16191d]">Description</label>
-                  <textarea value={extra.description} onChange={(e) => updateExtra(index, "description", e.target.value)} rows={3} className={inputCls} />
+                  <textarea
+                    value={extra.description}
+                    onChange={(e) => updateExtra(index, "description", e.target.value)}
+                    rows={3}
+                    className={inputCls}
+                  />
                 </div>
-                <button onClick={() => removeExtra(index)} className="text-xs text-[#ff6b47] hover:underline">Remove</button>
+                <button onClick={() => removeExtra(index)} className="text-xs text-[#ff6b47] hover:underline font-medium">Remove Entry</button>
               </div>
             ))}
           </div>
@@ -411,40 +547,52 @@ export default function ResumeEditorPage() {
     }
   }
 
+  if (loading) {
+    return (
+      <div className="h-screen bg-[#fafaf7] flex flex-col">
+        <AppNav />
+        <div className="flex-1 flex items-center justify-center">
+          <p className="text-[#6e7682] text-sm">Loading resume editor...</p>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="h-screen bg-[#fafaf7] flex flex-col">
       <AppNav />
 
       {/* Toolbar */}
-      <div className="bg-white border-b border-[#e3e1da] px-6 py-3 flex items-center justify-between shrink-0">
+      <div className="bg-white border-b border-[#e3e1da] px-6 py-3 flex items-center justify-between shrink-0 shadow-xs">
         <input
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           placeholder="Resume title..."
-          className="text-lg font-bold text-[#16191d] bg-transparent border-none outline-none"
+          className="text-lg font-bold text-[#16191d] bg-transparent border-none outline-none max-w-sm"
           style={{ fontFamily: "var(--font-display)" }}
         />
         <div className="flex gap-3 items-center">
           <select
             value={template}
             onChange={(e) => setTemplate(e.target.value)}
-            className="text-sm border border-[#e3e1da] rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-[#16191d]"
+            className="text-sm border border-[#e3e1da] rounded-xl px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-[#16191d] bg-white font-medium"
           >
             {RESUME_TEMPLATES.map((t) => (
-              <option key={t.id} value={t.id}>{t.name}</option>
+              <option key={t.id} value={t.id}>{t.name} Template</option>
             ))}
           </select>
           <button
             onClick={() => handlePrint()}
-            className="text-sm border border-[#e3e1da] px-3 py-1.5 rounded-lg hover:border-[#6e7682] transition-colors text-[#6e7682]"
+            className="text-sm border border-[#e3e1da] px-3.5 py-1.5 rounded-xl hover:border-[#6e7682] transition-colors text-[#6e7682] font-medium"
           >
             Download PDF
           </button>
           <button
             onClick={saveResume}
-            className="text-sm bg-[#16191d] text-white px-4 py-1.5 rounded-lg hover:bg-[#2a2d32] transition-colors"
+            disabled={saving}
+            className="text-sm bg-[#16191d] text-white px-4 py-1.5 rounded-xl hover:bg-[#2a2d32] transition-colors font-medium shadow-sm disabled:opacity-50"
           >
-            {saved ? "Saved!" : "Save"}
+            {saving ? "Saving..." : saved ? "✓ Saved!" : "Save"}
           </button>
         </div>
       </div>
@@ -466,16 +614,18 @@ export default function ResumeEditorPage() {
 
           <button
             onClick={saveResume}
-            className="w-full mb-8 mt-2 bg-[#16191d] text-white py-2.5 rounded-xl font-medium hover:bg-[#2a2d32] transition-colors"
+            disabled={saving}
+            className="w-full mb-8 mt-2 bg-[#16191d] text-white py-3 rounded-xl font-medium hover:bg-[#2a2d32] transition-colors shadow-sm"
           >
-            {saved ? "Saved!" : "Save Resume"}
+            {saving ? "Saving changes..." : saved ? "✓ Changes Saved!" : "Save Resume Changes"}
           </button>
         </div>
 
         {/* RIGHT: Preview */}
         <div className="w-1/2 overflow-y-auto bg-[#f1f0eb]">
-          <div className="sticky top-0 bg-[#e3e1da] border-b border-[#d4d2cb] px-4 py-2 text-xs text-[#6e7682] font-mono uppercase tracking-wider z-10">
-            Preview
+          <div className="sticky top-0 bg-[#e3e1da] border-b border-[#d4d2cb] px-4 py-2 text-xs text-[#6e7682] font-mono uppercase tracking-wider z-10 flex justify-between items-center">
+            <span>Live Vector Preview</span>
+            <span className="capitalize">{template} template</span>
           </div>
           <div className="p-6">
             <div className="bg-white shadow-sm rounded-lg overflow-hidden" ref={previewRef}>

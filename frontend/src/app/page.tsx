@@ -1,7 +1,7 @@
 "use client"
 
+import React, { useEffect, useState } from "react"
 import Link from "next/link"
-import { useEffect, useState } from "react"
 
 function ScannerAnimation() {
   const [score, setScore] = useState(0)
