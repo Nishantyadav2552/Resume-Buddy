@@ -1,3 +1,4 @@
+import { API_URL } from "@/lib/api"
 import NextAuth from "next-auth"
 import GoogleProvider from "next-auth/providers/google"
 import CredentialsProvider from "next-auth/providers/credentials"
@@ -19,7 +20,7 @@ const handler = NextAuth({
       async authorize(credentials) {
         try {
           const response = await fetch(
-            `${process.env.NEXT_PUBLIC_API_URL}/auth/login`,
+            `${API_URL}/auth/login`,
             {
               method: "POST",
               headers: {
