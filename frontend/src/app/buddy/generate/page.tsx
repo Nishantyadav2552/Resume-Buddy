@@ -110,7 +110,7 @@ export default function BuddyGeneratePage() {
         setRankingInfo(data.ranking_info)
         const ranked = data.all_ranked_projects || []
         setAllRankedProjects(ranked)
-        setSelectedProjectIds(ranked.slice(0, 3).map((p: any) => p.id))
+        setSelectedProjectIds(ranked.slice(0, 2).map((p: any) => p.id))
       }
     } catch {
       setError("Something went wrong with the AI tailoring engine. Please try again.")

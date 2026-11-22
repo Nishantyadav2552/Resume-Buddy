@@ -104,9 +104,9 @@ def fallback_tailor_pipeline(
             "description": desc
         })
 
-    # Tailor projects
+    # Tailor projects (select top 2 projects)
     tailored_projects = []
-    for p in ranked_projects[:3]:
+    for p in ranked_projects[:2]:
         raw_desc = p.get("description") or ""
         lines = [l.strip() for l in raw_desc.split("\n") if l.strip()]
         if not lines and raw_desc:

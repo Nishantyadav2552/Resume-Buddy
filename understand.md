@@ -203,7 +203,7 @@ When generating a targeted resume, the system ranks the user's saved items again
 4. **Final Scoring Formula**:
    $$\text{Final Score} = (0.60 \times \text{BM25}_{\text{norm}}) + (0.40 \times \text{Boost})$$
 5. **Selection & Assembly**:
-   * Retrieves the top 3 projects, top 2 experiences, top certifications, achievements, and sorts skills by relevance to the JD before packaging them into the resume JSON format.
+   * Retrieves the top 2 projects, top 2 experiences, top certifications, achievements, and sorts skills by relevance to the JD before packaging them into the resume JSON format.
 
 ---
 

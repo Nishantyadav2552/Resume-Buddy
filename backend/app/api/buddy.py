@@ -117,7 +117,7 @@ def generate_resume(
         "template": request.template,
         "all_ranked_projects": ranked.get("projects", []),
         "ranking_info": {
-            "projects_selected": min(len(ranked.get("projects", [])), 3),
+            "projects_selected": min(len(ranked.get("projects", [])), 2),
             "experience_selected": len(ranked.get("experience", [])),
             "certifications_selected": len(ranked.get("certifications", [])),
             "achievements_selected": len(ranked.get("achievements", [])),

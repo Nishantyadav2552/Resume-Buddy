@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from app.database import get_db
 from app.models.user import User
 
@@ -81,9 +82,10 @@ def register(
     request: RegisterRequest,
     db: Session = Depends(get_db)
 ):
+    email_norm = request.email.lower().strip()
     existing_user = (
         db.query(User)
-        .filter(User.email == request.email)
+        .filter(func.lower(User.email) == email_norm)
         .first()
     )
 
@@ -94,8 +96,8 @@ def register(
         )
 
     user = User(
-        name=request.name,
-        email=request.email,
+        name=request.name.strip(),
+        email=email_norm,
         hashed_password=hash_password(
             request.password
         )
@@ -131,9 +133,10 @@ def login(
     request: LoginRequest,
     db: Session = Depends(get_db)
 ):
+    email_norm = request.email.lower().strip()
     user = (
         db.query(User)
-        .filter(User.email == request.email)
+        .filter(func.lower(User.email) == email_norm)
         .first()
     )
 
